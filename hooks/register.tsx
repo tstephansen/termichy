@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 const PANE = 'file-tree'
 // The dock width asked for; one the person dragged wins, and without a request the dock can leave the chat a sliver.
@@ -408,6 +408,15 @@ const settings = async ($: Reader) => {
   }
 }
 
+// The file Claude is told about: the one the preview has open, while the pane is on screen (the selection outlives a
+// closed pane).
+const openFile = async ($: EngineInterface) => {
+  const file = await read($, selected)
+  if (!file) return ''
+  const panes = await $.ui.panes().catch(() => [])
+  return panes.some(p => p.id === PANE && p.isShown) ? file : ''
+}
+
 // `/tree setup` asks in plain words; the numbers behind the names stay out of sight.
 const WIDTHS = { Slim: 40, Balanced: 56, Roomy: 80 } as const
 const AUTO = 'Open it automatically'
@@ -457,8 +466,17 @@ export const register: Register = on => {
     const asked = Number.parseInt(arg, 10)
     const columns = Number.isFinite(asked) ? Math.min(MAX_COLUMNS, Math.max(MIN_COLUMNS, asked)) : (await settings($)).width
     await $.ui.open({ id: PANE, title: 'Files', columns })
+    // A preview left open before the pane closed is named under the prompt again.
+    $.ui.invalidate('ui.render')
     return { text: note ? `File tree opened. ${note}` : 'File tree opened.' }
   })
+
+  // The hint under the prompt names the open file only while the pane is up; nothing else redraws it on a close.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    const r = await next(e)
+    $.ui.invalidate('ui.render')
+    return r
+  }).catch(async (_$, e, next) => next(e)) // fail open: a failed observer passes the event on
 
   // The engine scrolls a focused pane with the arrows; taking the move here lets them walk the rows instead.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
@@ -538,6 +556,26 @@ export const register: Register = on => {
     const ran = await next(e)
     await update($, tick, n => n + 1).catch(() => undefined)
     return ran
+  }).catch(async (_$, e, next) => next(e)) // fail open: a failed observer passes the event on
+
+  // Tell Claude which file the preview shows, as the IDE extensions report the open file. Only prompts the person
+  // types. Quoted, so a newline in a name reads as part of the name.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command || e.origin.kind !== 'composer') return next(e)
+    const file = await openFile($)
+    if (!file) return next(e)
+    const note = `The user has ${JSON.stringify(file)} open in the file-tree pane. This may or may not be related to the current task.`
+    return next({ ...e, context: [...(e.context ?? []), note] })
+  }).catch(async (_$, e, next) => next(e)) // fail open: a failed observer passes the event on
+
+  // The same file, named at the end of the hint line under the prompt, where the IDE extensions show "In <file>". The
+  // engine draws no plugin's text inside the prompt itself.
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const file = await openFile($)
+    if (!file) return next(e)
+    const chip = `⧉ In ${cleanName(file.slice(file.lastIndexOf('/') + 1))}`
+    // After any tail a plugin above added; the terminal sets the tail off from its own line with a dot.
+    return next({ ...e, props: { ...e.props, tail: [e.props.tail, chip].filter(Boolean).join(' · ') } })
   }).catch(async (_$, e, next) => next(e)) // fail open: a failed observer passes the event on
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => {

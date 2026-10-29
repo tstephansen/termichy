@@ -28,6 +28,7 @@ Once the pane is open:
 - `↑` and `↓` (or the mouse wheel) move through the rows. `Enter` opens a folder or a file.
 - Open a file to preview it. `Tab` moves into the preview, where the arrows, `PageUp` and `PageDown` scroll it. Press `Tab` again to go back to the tree.
 - You can also click any row, or click the scrollbar to jump through a long file.
+- While a file is open in the preview, Claude is told its name with each prompt you type, so "explain this" or "fix the bug here" means that file. The line under the prompt shows `⧉ In <file>` while this is on. Close the preview or the pane and it stops.
 
 ## What you see
 
@@ -47,12 +48,15 @@ Your answers are kept for every session and project. The pane closes and reopens
 
 ## Data
 
-The plugin makes no network requests and sends nothing anywhere. It reads files under the folder you opened to draw the tree and the preview, and it runs `sips` (images, macOS only), `mktemp` and `rm` (a temporary folder for the image preview, deleted right after), `head` (large text files) and `open`, `xdg-open` or `explorer` (the open and reveal buttons) on your machine. It never writes to your project.
+The plugin makes no network requests of its own. The one thing it adds to what Claude sees is the path of the file open in the preview (see `prompt.submit` below), never its contents. It reads files under the folder you opened to draw the tree and the preview, and it runs `sips` (images, macOS only), `mktemp` and `rm` (a temporary folder for the image preview, deleted right after), `head` (large text files) and `open`, `xdg-open` or `explorer` (the open and reveal buttons) on your machine. It never writes to your project.
 
 What it hooks and sets:
 
 - `command.run` for `/tree` only. It opens the pane and handles `/tree setup`. It does not touch any other command or any permission prompt.
 - `tool.call`, only to redraw the tree after a tool may have changed files. It reads no tool input or output and passes every call on unchanged.
+- `prompt.submit`, to add one hidden line to each prompt you type while a file is open in the preview and the pane is on screen: the file's path relative to your project, like the open-file note the IDE extensions send. It never changes the prompt's text, and it leaves slash commands and prompts sent by other plugins alone.
+- `ui.render` for the hint line under the prompt, to add `⧉ In <file>` at its end while that file is being sent. The rest of the line is left as Claude Code draws it.
+- `ui.close` for its own pane only, to redraw that hint line when the pane closes. It never keeps the pane open.
 - `/tree setup` writes two plugin settings with `config.set`: `file-tree.width` and `file-tree.openOnStart`. Nothing else is set, and no environment variables.
 - It reads no credentials, tokens or API keys, and nothing it reads is sent anywhere.
 
